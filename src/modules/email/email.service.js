@@ -1,5 +1,5 @@
 const Email = require('./email.model');
-const { addEmailJob, removeEmailJob } = require('./email.queue');
+const { addEmailJob, removeEmailJob, rescheduleEmailJob } = require('./email.queue');
 const { EMAIL_STATUS, PAGINATION } = require('../../utils/constants');
 const logger = require('../../utils/logger');
 
@@ -78,14 +78,29 @@ const updateEmail = async (id, updateData) => {
 
     // If scheduledAt is being updated, reschedule the job
     if (updateData.scheduledAt && updateData.scheduledAt !== email.scheduledAt) {
-      // Remove old job if exists
       if (email.jobId) {
-        await removeEmailJob(email.jobId);
+        // Reschedule existing job (preserves jobId)
+        try {
+          const rescheduledJobId = await rescheduleEmailJob(email.jobId, updateData.scheduledAt);
+          // jobId should remain the same, but update it to be safe
+          updateData.jobId = rescheduledJobId;
+          logger.info(`Email job rescheduled: ${id}`, {
+            emailId: id,
+            jobId: rescheduledJobId,
+            oldScheduledAt: email.scheduledAt,
+            newScheduledAt: updateData.scheduledAt,
+          });
+        } catch (error) {
+          // If rescheduling fails (e.g., job not found), create new job
+          logger.warn(`Failed to reschedule job ${email.jobId}, creating new job:`, error.message);
+          const newJobId = await addEmailJob(id, updateData.scheduledAt);
+          updateData.jobId = newJobId;
+        }
+      } else {
+        // No existing job, create new one
+        const newJobId = await addEmailJob(id, updateData.scheduledAt);
+        updateData.jobId = newJobId;
       }
-
-      // Add new job with new scheduled time
-      const newJobId = await addEmailJob(id, updateData.scheduledAt);
-      updateData.jobId = newJobId;
     }
 
     await email.update(updateData);

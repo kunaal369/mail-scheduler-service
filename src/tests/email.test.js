@@ -121,6 +121,32 @@ describe('Email API', () => {
       expect(response.body.data.subject).toBe(updateData.subject);
     });
 
+    it('should preserve jobId when rescheduling email', async () => {
+      const email = await Email.create(validEmailData);
+      const originalJobId = email.jobId;
+
+      const updateData = {
+        scheduledAt: new Date(Date.now() + 180000).toISOString(), // 3 minutes from now
+      };
+
+      const response = await request(app).put(`/api/emails/${email.id}`).send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      
+      // Reload email to get updated jobId
+      const updatedEmail = await Email.findByPk(email.id);
+      
+      // JobId should be preserved (same as original)
+      if (originalJobId) {
+        expect(updatedEmail.jobId).toBe(originalJobId);
+      }
+      // Scheduled time should be updated
+      expect(new Date(updatedEmail.scheduledAt).getTime()).toBe(
+        new Date(updateData.scheduledAt).getTime()
+      );
+    });
+
     it('should return 404 for non-existent email', async () => {
       const fakeId = '00000000-0000-0000-0000-000000000000';
       const response = await request(app).put(`/api/emails/${fakeId}`).send({ subject: 'New' });

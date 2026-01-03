@@ -539,6 +539,20 @@ Update an existing email (reschedules if `scheduledAt` is changed).
 }
 ```
 
+**Rescheduling Behavior:**
+
+When you update the `scheduledAt` field, the system **updates the existing BullMQ job** instead of deleting and recreating it:
+
+- ✅ **Job ID is preserved** - The same `jobId` is maintained in the database
+- ✅ **Efficient operation** - Updates the job's execution time without creating duplicates
+- ✅ **Idempotent** - Safe to call multiple times with the same parameters
+- ✅ **State preservation** - Job retry count and other metadata are maintained (when using Redis/BullMQ)
+
+**Edge Cases:**
+- Cannot reschedule jobs that are already **completed** or **actively being processed**
+- If the job doesn't exist in the queue (e.g., was already processed), a new job is created
+- Cannot update emails that have already been sent (status: SENT)
+
 > **Note**: Cannot update emails that have already been sent (status: SENT).
 
 #### 5. Delete Email

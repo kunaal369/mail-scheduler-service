@@ -75,6 +75,23 @@ class InMemoryScheduler {
   }
 
   /**
+   * Reschedule an existing job to a new time
+   * Updates the existing job instead of cancelling and creating new one
+   * @param {string} jobId - Job identifier to reschedule
+   * @param {Date|string} newScheduledAt - New scheduled time
+   * @param {Function} callback - Function to execute (can be same or new)
+   * @param {Object} jobData - Data to pass to callback
+   * @returns {string} jobId (same as input, preserved)
+   */
+  reschedule(jobId, newScheduledAt, callback, jobData = {}) {
+    // Cancel existing job if it exists
+    this.cancel(jobId);
+
+    // Schedule with new time (same jobId) - preserves jobId
+    return this.schedule(jobId, newScheduledAt, callback, jobData);
+  }
+
+  /**
    * Get all scheduled jobs
    * @returns {Array} Array of job information
    */

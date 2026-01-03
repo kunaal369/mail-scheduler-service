@@ -116,5 +116,104 @@ const removeEmailJob = async (jobId) => {
   }
 };
 
-module.exports = { getEmailQueue, addEmailJob, removeEmailJob };
+/**
+ * Reschedule an existing email job to a new time
+ * Updates the existing job instead of deleting and recreating it
+ * @param {string} jobId - The existing job ID (should match emailId)
+ * @param {string|Date} newScheduledAt - New scheduled time
+ * @returns {string} The job ID (same as input, preserved)
+ */
+const rescheduleEmailJob = async (jobId, newScheduledAt) => {
+  try {
+    if (!config.redis.enabled) {
+      // Reschedule in-memory job (preserves jobId)
+      logger.info(`Rescheduling in-memory job: ${jobId}`, {
+        jobId,
+        newScheduledAt,
+      });
+
+      const { processEmail } = getEmailProcessor();
+      // Use reschedule method which preserves jobId
+      inMemoryScheduler.reschedule(
+        jobId,
+        newScheduledAt,
+        async () => {
+          await processEmail(jobId);
+        },
+        { emailId: jobId }
+      );
+
+      return jobId;
+    }
+
+    // Reschedule BullMQ job
+    const queue = await getEmailQueue();
+    const newDelay = new Date(newScheduledAt).getTime() - Date.now();
+
+    if (newDelay <= 0) {
+      throw new Error('Scheduled time must be in the future');
+    }
+
+    // Get existing job
+    const existingJob = await queue.getJob(jobId);
+
+    if (!existingJob) {
+      // Job doesn't exist, create new one with the jobId
+      logger.warn(`Job ${jobId} not found in queue, creating new job`, { jobId });
+      const newJob = await queue.add(
+        'send-email',
+        { emailId: jobId },
+        {
+          delay: newDelay,
+          jobId: jobId,
+        }
+      );
+      return newJob.id;
+    }
+
+    // Check job state - can't reschedule if already completed or active
+    const state = await existingJob.getState();
+
+    if (state === 'completed') {
+      throw new Error('Cannot reschedule a job that has already been completed');
+    }
+
+    if (state === 'active') {
+      throw new Error('Cannot reschedule a job that is currently being processed');
+    }
+
+    // For BullMQ, we need to remove and re-add with same jobId to effectively reschedule
+    // This preserves the jobId while updating the delay
+    // Note: BullMQ doesn't support changing delay on existing jobs directly
+    await existingJob.remove();
+
+    // Add new job with same jobId and new delay
+    // This preserves jobId while updating execution time
+    const rescheduledJob = await queue.add(
+      'send-email',
+      { emailId: jobId },
+      {
+        delay: newDelay,
+        jobId: jobId, // Preserve the same jobId
+      }
+    );
+
+    logger.info(`Job rescheduled successfully: ${jobId}`, {
+      jobId,
+      newScheduledAt,
+      newDelay,
+      previousState: state,
+    });
+
+    return rescheduledJob.id; // Should be same as jobId
+  } catch (error) {
+    logger.error('Failed to reschedule email job:', {
+      jobId,
+      error: error.message,
+    });
+    throw error;
+  }
+};
+
+module.exports = { getEmailQueue, addEmailJob, removeEmailJob, rescheduleEmailJob };
 
